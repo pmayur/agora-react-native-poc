@@ -8,6 +8,15 @@ const dimensions = {
 export default StyleSheet.create({
   max: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  channelInput: {
+    height: 50,
+    width: dimensions.width - 20,
+    marginTop: 40,
+    borderColor: 'gray',
+    borderWidth: 1,
   },
   buttonHolder: {
     height: 100,

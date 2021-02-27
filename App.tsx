@@ -3,6 +3,7 @@ import {
   Platform,
   ScrollView,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -12,7 +13,7 @@ import RtcEngine, {
 
 import requestCameraAndAudioPermission from './components/Permission';
 import styles from './components/Style';
-
+import GetTokenService from './service/get_token';
 import { ClientRole } from 'react-native-agora'
 
 interface Props {}
@@ -28,12 +29,17 @@ interface State {
   appId: string;
   token: string;
   channelName: string;
+  channelNameError: string | null;
   joinSucceed: boolean;
   peerIds: number[];
+  logs: string[];
   currentRole: ClientRole | null,
   isSpeaker: boolean,
   isUserAllowedToSpeak: boolean
 }
+
+// OURS app id for development
+const APP_ID = '78668502cc6a4088a1793cdbe1a4ba6c';
 
 export default class App extends Component<Props, State> {
   _engine?: RtcEngine;
@@ -41,12 +47,13 @@ export default class App extends Component<Props, State> {
   constructor(props) {
     super(props);
     this.state = {
-      appId: '33af1b40e3594f919bc0ad85853ea76f',
-      token:
-        '00633af1b40e3594f919bc0ad85853ea76fIACkBPNAFL+yxcyfXq+SlOQRXiqPbfRQM9NQQQ4Vsp9m8gJkFYoAAAAAEAAdwi3RUVI7YAEAAQBRUjtg',
-      channelName: 'channel-x',
+      appId: APP_ID,
+      token: '',
+      channelName: '',
+      channelNameError: null,
       joinSucceed: false,
       peerIds: [],
+      logs: [],
       currentRole: null,
       isSpeaker: true,
       isUserAllowedToSpeak: false,
@@ -63,6 +70,20 @@ export default class App extends Component<Props, State> {
     this.init();
   }
 
+  handleChannelNameChange = (text: string) => {
+    this.setState({
+      channelName: text,
+      channelNameError: null
+    })
+  }
+
+  addToLogs = (log: string) => {
+    const current = this.state.logs;
+    current.push(log);
+    this.setState({
+      logs: current
+    })
+  }
   /**
    * @name init
    * @description Function to initialize the Rtc Engine, attach event listeners and actions
@@ -77,12 +98,16 @@ export default class App extends Component<Props, State> {
 
     this._engine.addListener('Error', (err) => {
       console.log('Error something', err);
+      this.setState({
+        channelNameError: `Error code: ${String(err)}`
+      })
     });
 
     this._engine.addListener('UserJoined', (uid, elapsed) => {
       console.log('UserJoined', uid, elapsed);
       // Get current peer IDs
       const { peerIds } = this.state;
+      this.addToLogs(`${uid} Joined the event`)
       // If new user
       if (peerIds.indexOf(uid) === -1) {
         this.setState({
@@ -94,6 +119,8 @@ export default class App extends Component<Props, State> {
 
     this._engine.addListener('UserOffline', (uid, reason) => {
       console.log('UserOffline', uid, reason);
+      this.addToLogs(`${uid} Left the event`)
+
       const { peerIds } = this.state;
       this.setState({
         // Remove peer ID from state array
@@ -104,6 +131,8 @@ export default class App extends Component<Props, State> {
     // If Local user joins RTC channel
     this._engine.addListener('JoinChannelSuccess', (channel, uid, elapsed) => {
       console.log('JoinChannelSuccess', channel, uid, elapsed);
+      this.addToLogs(`${uid} joined ${channel}`)
+
       // Set state variable to true
       this.setState({
         joinSucceed: true,
@@ -117,20 +146,30 @@ export default class App extends Component<Props, State> {
    */
   startCall = async () => {
     // Join Channel using null token and channel name
-    await this._engine?.joinChannel(
-      this.state.token,
-      this.state.channelName,
-      null,
-      0
-    );
-    await this._engine?.setChannelProfile(ChannelProfile.LiveBroadcasting);
-    await this._engine?.setEnableSpeakerphone(true);
+    try {
+      if(!this.state.channelName || this.state.channelName.length < 4) {
+        throw new Error("Channel name invalid")
+      }
+      const token = await GetTokenService.getAccessToken(this.state.channelName);
+      await this._engine?.joinChannel(
+        token,
+        this.state.channelName,
+        null,
+        0
+      );
+      await this._engine?.setChannelProfile(ChannelProfile.LiveBroadcasting);
+      await this._engine?.setEnableSpeakerphone(true);
+
+    } catch (error) {
+      this.setState({
+        channelNameError: error.message
+      })
+    }
   };
 
   joinEventAsUser = async () => {
     await this.startCall();
     await this._engine?.setClientRole(ClientRole.Audience);
-    // await this._engine?.disableAudio();
     this.setState({
       currentRole: ClientRole.Audience,
     });
@@ -155,7 +194,7 @@ export default class App extends Component<Props, State> {
 
   gotAnswer = async () => {
     await this._engine?.setClientRole(ClientRole.Audience)
-    await this._engine?.disableAudio();
+    // await this._engine?.disableAudio();
     this.setState({
       isUserAllowedToSpeak: false
     })
@@ -202,18 +241,30 @@ export default class App extends Component<Props, State> {
     const { joinSucceed } = this.state;
 
     return joinSucceed ? null : (
-      <View style={styles.buttonHolder}>
-        <TouchableOpacity
-          onPress={this.joinEventAsCollaborator}
-          style={styles.button}
-        >
-          <Text style={styles.buttonText}> Join as Collaborator </Text>
-        </TouchableOpacity>
+      <>
+        <TextInput
+          value={this.state.channelName}
+          onChangeText={this.handleChannelNameChange}
+          placeholder={'Channel'}
+          style={styles.channelInput}
+        ></TextInput>
+        <Text>{this.state.channelNameError}</Text>
+        <View style={styles.buttonHolder}>
+          <TouchableOpacity
+            onPress={this.joinEventAsCollaborator}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}> Join as Collaborator </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity onPress={this.joinEventAsUser} style={styles.button}>
-          <Text style={styles.buttonText}> Join as User </Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            onPress={this.joinEventAsUser}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}> Join as User </Text>
+          </TouchableOpacity>
+        </View>
+      </>
     );
   };
 
@@ -233,11 +284,11 @@ export default class App extends Component<Props, State> {
           <TouchableOpacity onPress={this.endCall} style={styles.button}>
             <Text style={styles.buttonText}> End Event </Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={this.toggleSpeaker} style={styles.button}>
+          {/* <TouchableOpacity onPress={this.toggleSpeaker} style={styles.button}>
             <Text style={styles.buttonText}>
               {this.state.isSpeaker ? 'Earpiece' : 'Speaker'}
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
           {this._renderPermissionToSpeak()}
         </View>
         <View
@@ -274,10 +325,10 @@ export default class App extends Component<Props, State> {
   };
 
   _viewJoiningLogs = () => {
-    const { peerIds } = this.state;
+    const { logs } = this.state;
     return (
       <View style={styles.logsContainer}>
-        {peerIds.map((value, index) => {
+        {logs.map((value, index) => {
           console.log(value, 'peer');
           return (
             <View style={{ height: 50 }} key={value + index}>
